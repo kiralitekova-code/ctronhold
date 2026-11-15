@@ -1,0 +1,9 @@
+:root { font-family: Inter, system-ui, sans-serif; color: #f3ead5; background: #18221b; }
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+.game-shell, .viewport { position: relative; width: 100%; height: 100%; }
+.viewport canvas { display: block; width: 100%; height: 100%; }
+.hud { position: absolute; z-index: 2; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 22px; flex-wrap: wrap; padding: 14px 20px; background: #172019dd; border-bottom: 1px solid #a18b5a; font-size: 13px; }
+.hud strong { letter-spacing: .16em; color: #e5c77e; }
+.hud .status { margin-left: auto; color: #a8d59b; }
+.hud small { opacity: .7; }
