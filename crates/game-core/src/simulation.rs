@@ -193,21 +193,18 @@ impl GameWorld {
     }
 
     fn update_combat(&mut self, dt: f32) {
-        let actors: Vec<(Entity, u32, u32, f32, f32, f32, f32, f32)> = {
+        let actors: Vec<(Entity, u32, u32, f32, f32, u8, f32, f32, f32)> = {
             let mut query = self.world.query::<(
                 Entity, &StableId, &Position, &Team, &CombatStats, &AttackOrder,
             )>();
             query.iter(&self.world).map(|(entity, id, p, team, stats, order)| (
                 entity, id.0, order.target_id, p.x, p.z, team.0,
-                stats.damage, stats.range,
-            )).map(|(e, id, target, x, z, team, damage, range)| {
-                (e, id, target, x, z, team as f32, damage, range)
-            }).collect()
+                stats.damage, stats.range, stats.attack_interval,
+            )).collect()
         };
 
         let mut hits: Vec<(u32, f32)> = Vec::new();
-        for (attacker, _id, target_id, ax, az, team_f, damage, range) in actors {
-            let team = team_f as u8;
+        for (attacker, _id, target_id, ax, az, team, damage, range, attack_interval) in actors {
             let Some(target) = self.entity_by_id(target_id) else { continue; };
             let target_data = {
                 let (Some(position), Some(target_team), Some(health)) = (
@@ -222,8 +219,7 @@ impl GameWorld {
             let Some(mut order) = self.world.get_mut::<AttackOrder>(attacker) else { continue; };
             order.cooldown = (order.cooldown - dt).max(0.0);
             if in_range && order.cooldown <= 0.0 {
-                order.cooldown = self.world.get::<CombatStats>(attacker)
-                    .map(|stats| stats.attack_interval).unwrap_or(1.0);
+                order.cooldown = attack_interval;
                 hits.push((target_id, damage));
             }
         }
