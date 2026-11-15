@@ -6,7 +6,9 @@ type SnapshotEntity = {
   id: number;
   position: { x: number; y: number; z: number };
   sprite: { kind: string; color: [number, number, number] };
+  team: number;
   moving: boolean;
+  attacking: boolean;
 };
 
 type Formation = "line" | "column" | "wedge";
@@ -166,7 +168,7 @@ export class GameRenderer {
     const next = start.shift ? new Set(this.selectedIds) : new Set<number>();
 
     for (const entity of entities) {
-      if (entity.sprite.kind !== "unit") continue;
+      if (entity.sprite.kind !== "unit" || entity.team !== 1) continue;
       const projected = new THREE.Vector3(entity.position.x, 0.6, entity.position.z).project(this.camera);
       const screenX = rect.left + (projected.x + 1) * 0.5 * rect.width;
       const screenY = rect.top + (1 - projected.y) * 0.5 * rect.height;
@@ -187,9 +189,8 @@ export class GameRenderer {
     this.updatePointer(event);
 
     if (event.button === 0) {
-      const unitMeshes = [...this.objects.entries()]
-        .filter(([id]) => id !== 1)
-        .map(([, object]) => object);
+      const unitMeshes = [...this.objects.values()]
+        .filter(object => object.userData.team === 1);
       const hit = this.raycaster.intersectObjects(unitMeshes, false)[0];
       if (hit) {
         const id = Number(hit.object.userData.entityId);
@@ -209,6 +210,17 @@ export class GameRenderer {
       if (!event.shiftKey) {
         this.selectedIds.clear();
         this.syncSelectionRings();
+      }
+      return;
+    }
+
+    const enemyMeshes = [...this.objects.values()]
+      .filter(object => object.userData.team === 2);
+    const enemyHit = this.raycaster.intersectObjects(enemyMeshes, false)[0];
+    if (enemyHit && this.selectedIds.size > 0) {
+      const targetId = Number(enemyHit.object.userData.entityId);
+      for (const attackerId of this.selectedIds) {
+        this.engine.issue_attack(attackerId, targetId);
       }
       return;
     }
@@ -249,6 +261,18 @@ export class GameRenderer {
   private syncEntities() {
     if (!this.engine) return;
     const entities = this.engine.snapshot() as SnapshotEntity[];
+    const liveIds = new Set(entities.map(entity => entity.id));
+    for (const [id, object] of this.objects) {
+      if (liveIds.has(id)) continue;
+      this.scene.remove(object);
+      this.objects.delete(id);
+      this.selectedIds.delete(id);
+      const ring = this.selectionRings.get(id);
+      if (ring) {
+        this.scene.remove(ring);
+        this.selectionRings.delete(id);
+      }
+    }
     for (const entity of entities) {
       let object = this.objects.get(entity.id);
       if (!object) {
@@ -258,6 +282,7 @@ export class GameRenderer {
         const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(...entity.sprite.color) });
         object = new THREE.Mesh(geometry, material);
         object.userData.entityId = entity.id;
+        object.userData.team = entity.team;
         (object as THREE.Mesh).castShadow = true;
         this.scene.add(object);
         this.objects.set(entity.id, object);
