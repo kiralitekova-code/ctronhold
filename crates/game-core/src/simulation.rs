@@ -132,7 +132,7 @@ impl GameWorld {
             let Some((_, path)) = best else { continue; };
             if let Some(mut movement) = self.world.get_mut::<MoveOrder>(entity) {
                 movement.path = path;
-                movement.next_step = usize::from(movement.path.len() > 1);
+                movement.next_step = if movement.path.len() > 1 { 1 } else { 0 };
             }
             if let Some(mut attack) = self.world.get_mut::<AttackOrder>(entity) {
                 attack.target_id = 0; attack.cooldown = 0.0;
