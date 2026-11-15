@@ -13,8 +13,8 @@ An original browser-based RTS prototype. It uses familiar real-time strategy ide
 
 - Three.js RTS camera with WASD/arrow movement, edge scrolling, zoom, and right-mouse drag.
 - A 64x64 world grid with a generated stone ridge, a traversable gate, and a rock field.
-- Click a ground cell to highlight it and ask Rust/WASM for an A* route from the test unit.
-- The route is rendered as a temporary line; impassable cells are shown as stone blocks.
+- Left-click a ground cell to highlight it. Right-click issues a move order to the test soldier; Rust computes A* and advances the unit along the path.
+- The route is rendered as a temporary line; the soldier moves at a fixed world speed and stops at the destination. Impassable cells are shown as stone blocks.
 - Castle and unit are still primitive development placeholders, not final art.
 
 ## Local development
