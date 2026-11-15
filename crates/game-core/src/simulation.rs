@@ -328,7 +328,7 @@ impl GameWorld {
             let mut query = self.world.query::<(
                 Entity, &StableId, &Position, &Team, &CombatStats, &AttackOrder, Option<&Stance>,
             )>();
-            query.iter(&self.world).map(|(entity, id, p, team, stats, order)| (
+            query.iter(&self.world).map(|(entity, id, p, team, stats, order, stance)| (
                 entity, id.0, order.target_id, p.x, p.z, team.0,
                 stats.damage, stats.range, stats.attack_interval, stance.copied().unwrap_or_default(),
             )).collect()
