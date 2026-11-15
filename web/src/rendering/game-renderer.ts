@@ -25,6 +25,13 @@ export class GameRenderer {
   private pointer = new THREE.Vector2();
   private selection: THREE.Mesh;
   private formation: Formation = "line";
+  private dragStart?: { x: number; y: number; shift: boolean };
+  private dragMoved = false;
+  private suppressNextClick = false;
+  private selectionBox = document.createElement("div");
+  private onPointerDown = (event: PointerEvent) => this.beginSelectionDrag(event);
+  private onPointerMove = (event: PointerEvent) => this.updateSelectionDrag(event);
+  private onPointerUp = (event: PointerEvent) => this.finishSelectionDrag(event);
   private onCanvasClick = (event: MouseEvent) => this.handleCanvasClick(event);
   private onCanvasAuxClick = (event: MouseEvent) => this.handleCanvasClick(event);
   private onKeyDown = (event: KeyboardEvent) => {
@@ -55,6 +62,11 @@ export class GameRenderer {
     this.selection.visible = false;
     this.scene.add(this.selection);
 
+    this.selectionBox.style.cssText = "position:absolute;display:none;pointer-events:none;border:1px solid #ffe08a;background:rgba(255,224,138,.16);z-index:3;";
+    host.appendChild(this.selectionBox);
+    this.renderer.domElement.addEventListener("pointerdown", this.onPointerDown);
+    window.addEventListener("pointermove", this.onPointerMove);
+    window.addEventListener("pointerup", this.onPointerUp);
     this.renderer.domElement.addEventListener("click", this.onCanvasClick);
     this.renderer.domElement.addEventListener("auxclick", this.onCanvasAuxClick);
     window.addEventListener("keydown", this.onKeyDown);
@@ -109,7 +121,68 @@ export class GameRenderer {
     this.raycaster.setFromCamera(this.pointer, this.camera);
   }
 
+  private beginSelectionDrag(event: PointerEvent) {
+    if (event.button !== 0 || !(event.target instanceof HTMLCanvasElement)) return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.dragStart = { x: event.clientX, y: event.clientY, shift: event.shiftKey };
+    this.dragMoved = false;
+    this.selectionBox.style.display = "none";
+    this.selectionBox.style.left = `${event.clientX - rect.left}px`;
+    this.selectionBox.style.top = `${event.clientY - rect.top}px`;
+    this.selectionBox.style.width = "0px";
+    this.selectionBox.style.height = "0px";
+  }
+
+  private updateSelectionDrag(event: PointerEvent) {
+    if (!this.dragStart) return;
+    const dx = event.clientX - this.dragStart.x;
+    const dy = event.clientY - this.dragStart.y;
+    if (!this.dragMoved && Math.hypot(dx, dy) < 5) return;
+    this.dragMoved = true;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const left = Math.min(this.dragStart.x, event.clientX) - rect.left;
+    const top = Math.min(this.dragStart.y, event.clientY) - rect.top;
+    this.selectionBox.style.display = "block";
+    this.selectionBox.style.left = `${left}px`;
+    this.selectionBox.style.top = `${top}px`;
+    this.selectionBox.style.width = `${Math.abs(dx)}px`;
+    this.selectionBox.style.height = `${Math.abs(dy)}px`;
+  }
+
+  private finishSelectionDrag(event: PointerEvent) {
+    if (!this.dragStart) return;
+    const start = this.dragStart;
+    this.dragStart = undefined;
+    this.selectionBox.style.display = "none";
+    if (!this.dragMoved || !this.engine) return;
+
+    this.suppressNextClick = true;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const minX = Math.min(start.x, event.clientX);
+    const maxX = Math.max(start.x, event.clientX);
+    const minY = Math.min(start.y, event.clientY);
+    const maxY = Math.max(start.y, event.clientY);
+    const entities = this.engine.snapshot() as SnapshotEntity[];
+    const next = start.shift ? new Set(this.selectedIds) : new Set<number>();
+
+    for (const entity of entities) {
+      if (entity.sprite.kind !== "unit") continue;
+      const projected = new THREE.Vector3(entity.position.x, 0.6, entity.position.z).project(this.camera);
+      const screenX = rect.left + (projected.x + 1) * 0.5 * rect.width;
+      const screenY = rect.top + (1 - projected.y) * 0.5 * rect.height;
+      if (screenX >= minX && screenX <= maxX && screenY >= minY && screenY <= maxY) {
+        next.add(entity.id);
+      }
+    }
+    this.selectedIds = next;
+    this.syncSelectionRings();
+  }
+
   private handleCanvasClick(event: MouseEvent) {
+    if (this.suppressNextClick) {
+      this.suppressNextClick = false;
+      return;
+    }
     if (!this.engine || (event.button !== 0 && event.button !== 2)) return;
     this.updatePointer(event);
 
@@ -225,8 +298,12 @@ export class GameRenderer {
   dispose() {
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("keydown", this.onKeyDown);
+    this.renderer.domElement.removeEventListener("pointerdown", this.onPointerDown);
+    window.removeEventListener("pointermove", this.onPointerMove);
+    window.removeEventListener("pointerup", this.onPointerUp);
     this.renderer.domElement.removeEventListener("click", this.onCanvasClick);
     this.renderer.domElement.removeEventListener("auxclick", this.onCanvasAuxClick);
+    this.selectionBox.remove();
     this.controls.dispose();
     this.renderer.dispose();
     this.host.replaceChildren();
