@@ -31,11 +31,16 @@ impl GameWorld {
             Sprite { kind: "castle".into(), color: [0.72, 0.68, 0.55] },
             Health::new(1000.0),
         );
-        game.spawn(
-            Position { x: 3.0, y: 0.0, z: 2.0 },
-            Sprite { kind: "unit".into(), color: [0.25, 0.45, 0.85] },
-            Health::new(100.0),
-        );
+
+        // A compact starting squad. Stable IDs are persistent gameplay identifiers,
+        // independent of Bevy's internal entity indices.
+        for (x, z) in [(3.0, 2.0), (4.0, 2.0), (3.0, 3.0), (4.0, 3.0), (5.0, 2.0)] {
+            game.spawn(
+                Position { x, y: 0.0, z },
+                Sprite { kind: "unit".into(), color: [0.25, 0.45, 0.85] },
+                Health::new(100.0),
+            );
+        }
         game
     }
 
@@ -58,6 +63,11 @@ impl GameWorld {
                 .map(|(entity, _)| entity)
         };
         let Some(entity) = entity else { return false; };
+
+        // The castle is not a controllable unit.
+        if self.world.get::<Sprite>(entity).map(|sprite| sprite.kind.as_str()) != Some("unit") {
+            return false;
+        }
 
         let start = {
             let Some(position) = self.world.get::<Position>(entity) else { return false; };
@@ -124,13 +134,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn starting_squad_has_five_stable_unit_ids() {
+        let mut game = GameWorld::new();
+        let units: Vec<_> = game.snapshot().into_iter()
+            .filter(|entity| entity.sprite.kind == "unit")
+            .map(|entity| entity.id)
+            .collect();
+        assert_eq!(units, vec![2, 3, 4, 5, 6]);
+    }
+
+    #[test]
     fn unit_moves_along_valid_path_and_stops() {
         let mut game = GameWorld::new();
         let map = GridMap;
-        assert!(game.move_unit(2, (6, 2), &map));
+        assert!(game.move_unit(2, (8, 2), &map));
         for _ in 0..100 { game.update(0.1); }
         let unit = game.snapshot().into_iter().find(|e| e.id == 2).unwrap();
-        assert!((unit.position.x - 6.5).abs() < 0.01);
+        assert!((unit.position.x - 8.5).abs() < 0.01);
         assert!((unit.position.z - 2.5).abs() < 0.01);
         assert!(!unit.moving);
     }
@@ -139,5 +159,10 @@ mod tests {
     fn blocked_move_order_is_rejected() {
         let mut game = GameWorld::new();
         assert!(!game.move_unit(2, (-14, 10), &GridMap));
+    }
+
+    #[test]
+    fn castle_cannot_receive_a_unit_move_order() {
+        assert!(!GameWorld::new().move_unit(1, (2, 2), &GridMap));
     }
 }
