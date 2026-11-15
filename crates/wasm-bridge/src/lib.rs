@@ -1,4 +1,5 @@
 use game_core::{GameWorld, GridMap};
+use game_core::components::Stance;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -39,6 +40,20 @@ impl GameEngine {
 
     pub fn issue_attack(&mut self, attacker_id: u32, target_id: u32) -> bool {
         self.world.issue_attack(attacker_id, target_id, &self.map)
+    }
+
+    pub fn set_stance(&mut self, unit_ids: Vec<u32>, stance: u8) -> usize {
+        let stance = match stance {
+            0 => Stance::Aggressive,
+            1 => Stance::Defensive,
+            2 => Stance::Hold,
+            _ => return 0,
+        };
+        self.world.set_stance_for_units(&unit_ids, stance)
+    }
+
+    pub fn retreat_units(&mut self, unit_ids: Vec<u32>) -> usize {
+        self.world.retreat_units(&unit_ids, &self.map)
     }
 
     pub fn elapsed(&self) -> f64 { self.world.elapsed() }
