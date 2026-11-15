@@ -352,6 +352,25 @@ mod tests {
     }
 
     #[test]
+    fn hostile_patrol_retargets_after_its_victim_is_removed() {
+        let mut game = GameWorld::new();
+        game.update(0.1, &GridMap);
+        let first_target = {
+            let hostile = game.entity_by_id(7).unwrap();
+            game.world.get::<AttackOrder>(hostile).unwrap().target_id
+        };
+        assert_ne!(first_target, 0);
+        let victim = game.entity_by_id(first_target).unwrap();
+        game.world.despawn(victim);
+
+        game.update(0.1, &GridMap);
+        let hostile = game.entity_by_id(7).unwrap();
+        let new_target = game.world.get::<AttackOrder>(hostile).unwrap().target_id;
+        assert_ne!(new_target, 0);
+        assert_ne!(new_target, first_target);
+    }
+
+    #[test]
     fn blocked_move_order_is_rejected() {
         let mut game = GameWorld::new();
         assert!(!game.move_unit(2, (-14, 10), &GridMap));
