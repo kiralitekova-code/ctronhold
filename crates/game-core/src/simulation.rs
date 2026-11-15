@@ -201,7 +201,7 @@ impl GameWorld {
             }
         }
 
-        self.update_combat(dt);
+        self.update_combat(dt, map);
         self.update_ai(map);
     }
 
@@ -237,7 +237,7 @@ impl GameWorld {
         }
     }
 
-    fn update_combat(&mut self, dt: f32) {
+    fn update_combat(&mut self, dt: f32, map: &GridMap) {
         let actors: Vec<(Entity, u32, u32, f32, f32, u8, f32, f32, f32)> = {
             let mut query = self.world.query::<(
                 Entity, &StableId, &Position, &Team, &CombatStats, &AttackOrder,
@@ -249,8 +249,14 @@ impl GameWorld {
         };
 
         let mut hits: Vec<(u32, f32)> = Vec::new();
-        for (attacker, _id, target_id, ax, az, team, damage, range, attack_interval) in actors {
-            let Some(target) = self.entity_by_id(target_id) else { continue; };
+        for (attacker, attacker_id, target_id, ax, az, team, damage, range, attack_interval) in actors {
+            let Some(target) = self.entity_by_id(target_id) else {
+                if let Some(mut order) = self.world.get_mut::<AttackOrder>(attacker) {
+                    order.target_id = 0;
+                    order.cooldown = 0.0;
+                }
+                continue;
+            };
             let target_data = {
                 let (Some(position), Some(target_team), Some(health)) = (
                     self.world.get::<Position>(target),
@@ -266,6 +272,16 @@ impl GameWorld {
             if in_range && order.cooldown <= 0.0 {
                 order.cooldown = attack_interval;
                 hits.push((target_id, damage));
+            }
+            drop(order);
+
+            // If the target moved away after the attacker arrived, resume pursuit.
+            if !in_range {
+                let needs_repath = self.world.get::<MoveOrder>(attacker)
+                    .map(|movement| movement.path.is_empty()).unwrap_or(false);
+                if needs_repath {
+                    self.issue_attack(attacker_id, target_id, map);
+                }
             }
         }
 
