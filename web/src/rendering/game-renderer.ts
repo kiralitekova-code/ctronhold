@@ -1,7 +1,6 @@
 import * as THREE from "three";
 import { RtsCamera } from "../camera/rts-camera";
 
-// wasm-pack writes the generated package to src/wasm.
 type WasmModule = typeof import("../wasm/wasm_bridge");
 
 export class GameRenderer {
@@ -16,7 +15,8 @@ export class GameRenderer {
   private pointer = new THREE.Vector2();
   private selection: THREE.Mesh;
   private routeLine?: THREE.Line;
-  private onCanvasClick = (event: MouseEvent) => this.selectCell(event);
+  private unitId = 2;
+  private onCanvasClick = (event: MouseEvent) => this.handleCanvasClick(event);
 
   constructor(private host: HTMLElement) {
     this.scene.background = new THREE.Color(0x9bb7bd);
@@ -32,10 +32,8 @@ export class GameRenderer {
 
     this.selection = new THREE.Mesh(
       new THREE.PlaneGeometry(0.96, 0.96),
-      new THREE.MeshBasicMaterial({
-        color: 0xffdf76, transparent: true, opacity: 0.45,
-        side: THREE.DoubleSide, depthWrite: false
-      })
+      new THREE.MeshBasicMaterial({ color: 0xffdf76, transparent: true, opacity: 0.45,
+        side: THREE.DoubleSide, depthWrite: false })
     );
     this.selection.rotation.x = -Math.PI / 2;
     this.selection.position.y = 0.04;
@@ -58,14 +56,11 @@ export class GameRenderer {
     sun.castShadow = true;
     this.scene.add(sun);
 
-    const groundMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(100, 100),
-      new THREE.MeshStandardMaterial({ color: 0x718b55 })
-    );
+    const groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(100, 100),
+      new THREE.MeshStandardMaterial({ color: 0x718b55 }));
     groundMesh.rotation.x = -Math.PI / 2;
     groundMesh.receiveShadow = true;
     this.scene.add(groundMesh);
-
     this.renderObstacles();
     this.syncEntities();
   };
@@ -90,23 +85,38 @@ export class GameRenderer {
     }
   }
 
-  private selectCell(event: MouseEvent) {
-    if (event.button !== 0 || !this.engine) return;
+  private handleCanvasClick(event: MouseEvent) {
+    if (!this.engine || (event.button !== 0 && event.button !== 2)) return;
     const rect = this.renderer.domElement.getBoundingClientRect();
-    this.pointer.set(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1
-    );
+    this.pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const point = new THREE.Vector3();
     if (!this.raycaster.ray.intersectPlane(this.ground, point)) return;
 
     const x = Math.floor(point.x);
     const z = Math.floor(point.z);
-    this.selection.position.set(x + 0.5, 0.04, z + 0.5);
-    this.selection.visible = true;
+    if (event.button === 0) {
+      this.selection.position.set(x + 0.5, 0.04, z + 0.5);
+      this.selection.visible = true;
+      return;
+    }
 
-    const path = this.engine.find_path(3, 2, x, z) as number[][];
+    // Right-click gives the selected test unit a real Rust-side move order.
+    const accepted = this.engine.issue_move(this.unitId, x, z);
+    if (accepted) this.drawRoute(x, z);
+  }
+
+  private drawRoute(goalX: number, goalZ: number) {
+    if (!this.engine) return;
+    const entities = this.engine.snapshot() as Array<{
+      id: number; position: { x: number; z: number };
+    }>;
+    const unit = entities.find(entity => entity.id === this.unitId);
+    if (!unit) return;
+    const path = this.engine.find_path(
+      Math.floor(unit.position.x), Math.floor(unit.position.z), goalX, goalZ
+    ) as number[][];
     if (this.routeLine) {
       this.scene.remove(this.routeLine);
       this.routeLine.geometry.dispose();
@@ -114,12 +124,9 @@ export class GameRenderer {
       this.routeLine = undefined;
     }
     if (path.length > 1) {
-      const points = path.map(([px, pz]) => new THREE.Vector3(px + 0.5, 0.09, pz + 0.5));
-      const geometry = new THREE.BufferGeometry().setFromPoints(points);
-      this.routeLine = new THREE.Line(
-        geometry,
-        new THREE.LineBasicMaterial({ color: 0xffd166, linewidth: 2 })
-      );
+      const points = path.map(([x, z]) => new THREE.Vector3(x + 0.5, 0.09, z + 0.5));
+      this.routeLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),
+        new THREE.LineBasicMaterial({ color: 0xffd166 }));
       this.scene.add(this.routeLine);
     }
   }
@@ -136,16 +143,15 @@ export class GameRenderer {
         const geometry = entity.sprite.kind === "castle"
           ? new THREE.BoxGeometry(2.5, 2.5, 2.5)
           : new THREE.CapsuleGeometry(0.35, 0.8, 4, 8);
-        const material = new THREE.MeshStandardMaterial({
-          color: new THREE.Color(...entity.sprite.color)
-        });
+        const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(...entity.sprite.color) });
         object = new THREE.Mesh(geometry, material);
         (object as THREE.Mesh).castShadow = true;
         this.scene.add(object);
         this.objects.set(entity.id, object);
       }
-      object.position.set(entity.position.x, entity.position.y +
-        (entity.sprite.kind === "castle" ? 1.25 : 0.6), entity.position.z);
+      object.position.set(entity.position.x,
+        entity.position.y + (entity.sprite.kind === "castle" ? 1.25 : 0.6),
+        entity.position.z);
     }
   }
 
