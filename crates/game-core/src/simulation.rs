@@ -2,7 +2,7 @@ use bevy_ecs::prelude::{Entity, World};
 use serde::Serialize;
 
 use crate::components::{
-    AttackOrder, CombatStats, Health, MoveOrder, Position, Projectile, Sprite, StableId, Team, UnitClass,
+    AttackOrder, CombatStats, Health, MoveOrder, Position, Projectile, Sprite, StableId, Stance, Team, UnitClass,
 };
 use crate::navigation::GridMap;
 
@@ -16,6 +16,7 @@ pub struct EntitySnapshot {
     pub moving: bool,
     pub attacking: bool,
     pub unit_class: Option<UnitClass>,
+    pub stance: Option<Stance>,
 }
 
 pub struct GameWorld {
@@ -46,7 +47,7 @@ impl GameWorld {
             let entity = game.spawn(Position { x, y: 0.0, z },
                 Sprite { kind: "unit".into(), color: [0.25, 0.45, 0.85] },
                 Health::new(class.max_health()));
-            game.world.entity_mut(entity).insert((Team(1), class.combat_stats(), class, MoveOrder::default()));
+            game.world.entity_mut(entity).insert((Team(1), class.combat_stats(), class, MoveOrder::default(), Stance::Aggressive));
         }
         let hostile = [
             (-5.0, 2.0, UnitClass::Swordsman), (-6.0, 2.0, UnitClass::Spearman),
@@ -56,7 +57,7 @@ impl GameWorld {
             let entity = game.spawn(Position { x, y: 0.0, z },
                 Sprite { kind: "unit".into(), color: [0.82, 0.25, 0.18] },
                 Health::new(class.max_health()));
-            game.world.entity_mut(entity).insert((Team(2), class.combat_stats(), class, MoveOrder::default()));
+            game.world.entity_mut(entity).insert((Team(2), class.combat_stats(), class, MoveOrder::default(), Stance::Aggressive));
         }
         game
     }
@@ -91,6 +92,54 @@ impl GameWorld {
             *attack = AttackOrder { target_id: 0, cooldown: 0.0 };
         }
         true
+    }
+
+    pub fn set_stance(&mut self, id: u32, stance: Stance) -> bool {
+        let Some(entity) = self.entity_by_id(id) else { return false; };
+        if self.world.get::<Sprite>(entity).map(|s| s.kind.as_str()) != Some("unit") { return false; }
+        self.world.entity_mut(entity).insert(stance);
+        if stance == Stance::Hold {
+            if let Some(mut movement) = self.world.get_mut::<MoveOrder>(entity) {
+                movement.path.clear(); movement.next_step = 0;
+            }
+            if let Some(mut attack) = self.world.get_mut::<AttackOrder>(entity) {
+                attack.target_id = 0; attack.cooldown = 0.0;
+            }
+        }
+        true
+    }
+
+    pub fn set_stance_for_units(&mut self, ids: &[u32], stance: Stance) -> usize {
+        ids.iter().filter(|id| self.set_stance(**id, stance)).count()
+    }
+
+    pub fn retreat_units(&mut self, ids: &[u32], map: &GridMap) -> usize {
+        // Six perimeter rally cells keep a retreating group from converging on one tile.
+        const RALLY: [(i32, i32); 6] = [(2, 0), (0, 2), (-2, 0), (0, -2), (2, 2), (-2, 2)];
+        let mut issued = 0;
+        for (index, id) in ids.iter().enumerate() {
+            let Some(entity) = self.entity_by_id(*id) else { continue; };
+            if self.world.get::<Sprite>(entity).map(|s| s.kind.as_str()) != Some("unit") { continue; }
+            let mut goals = RALLY.to_vec();
+            goals.rotate_left(index % goals.len());
+            let Some(position) = self.world.get::<Position>(entity) else { continue; };
+            let start = (position.x.floor() as i32, position.z.floor() as i32);
+            let best = goals.into_iter().filter_map(|goal| {
+                let path = map.find_path(start, goal);
+                if path.is_empty() { None } else { Some((path.len(), path)) }
+            }).min_by_key(|(length, _)| *length);
+            let Some((_, path)) = best else { continue; };
+            if let Some(mut movement) = self.world.get_mut::<MoveOrder>(entity) {
+                movement.path = path;
+                movement.next_step = usize::from(movement.path.len() > 1);
+            }
+            if let Some(mut attack) = self.world.get_mut::<AttackOrder>(entity) {
+                attack.target_id = 0; attack.cooldown = 0.0;
+            }
+            self.world.entity_mut(entity).insert(Stance::Defensive);
+            issued += 1;
+        }
+        issued
     }
 
     /// Orders a unit to move into its class-specific attack range, then engage an enemy.
@@ -251,52 +300,42 @@ impl GameWorld {
     }
 
     fn update_ai(&mut self, map: &GridMap) {
-        const AGGRO_RANGE: f32 = 12.0;
-        let (hostiles, friendlies): (Vec<(u32, f32, f32, u32)>, Vec<(u32, f32, f32)>) = {
-            let mut query = self.world.query::<(&StableId, &Position, &Team, &Sprite, Option<&AttackOrder>)>();
-            let mut hostiles = Vec::new();
-            let mut friendlies = Vec::new();
-            for (id, position, team, sprite, attack) in query.iter(&self.world) {
-                if sprite.kind != "unit" { continue; }
-                if team.0 == 2 {
-                    hostiles.push((id.0, position.x, position.z, attack.map(|a| a.target_id).unwrap_or(0)));
-                } else if team.0 == 1 {
-                    friendlies.push((id.0, position.x, position.z));
-                }
-            }
-            (hostiles, friendlies)
+        let actors: Vec<(u32, f32, f32, u8, u32, Stance)> = {
+            let mut query = self.world.query::<(&StableId, &Position, &Team, &Sprite, Option<&AttackOrder>, Option<&Stance>)>();
+            query.iter(&self.world).filter_map(|(id, p, team, sprite, attack, stance)| {
+                if sprite.kind != "unit" { return None; }
+                Some((id.0, p.x, p.z, team.0, attack.map(|a| a.target_id).unwrap_or(0),
+                    stance.copied().unwrap_or_default()))
+            }).collect()
         };
-
-        for (hostile_id, hx, hz, current_target) in hostiles {
-            let target_alive = current_target != 0 && self.entity_by_id(current_target)
-                .and_then(|entity| self.world.get::<Health>(entity).map(|health| health.current > 0.0))
-                .unwrap_or(false);
-            if target_alive { continue; }
-
-            let nearest = friendlies.iter()
-                .map(|(id, x, z)| (*id, (hx - *x).powi(2) + (hz - *z).powi(2)))
-                .filter(|(_, distance_sq)| *distance_sq <= AGGRO_RANGE * AGGRO_RANGE)
+        for (actor_id, ax, az, team, current_target, stance) in &actors {
+            if *stance == Stance::Hold || *current_target != 0 { continue; }
+            let aggro = if *stance == Stance::Defensive { 6.0_f32 } else { 12.0_f32 };
+            let nearest = actors.iter()
+                .filter(|(id, _, _, other_team, _, _)| other_team != team && id != actor_id)
+                .map(|(id, x, z, _, _, _)| (*id, (ax - *x).powi(2) + (az - *z).powi(2)))
+                .filter(|(_, distance_sq)| *distance_sq <= aggro * aggro)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             if let Some((target_id, _)) = nearest {
-                self.issue_attack(hostile_id, target_id, map);
+                self.issue_attack(*actor_id, target_id, map);
             }
         }
     }
 
     fn update_combat(&mut self, dt: f32, map: &GridMap) {
-        let actors: Vec<(Entity, u32, u32, f32, f32, u8, f32, f32, f32)> = {
+        let actors: Vec<(Entity, u32, u32, f32, f32, u8, f32, f32, f32, Stance)> = {
             let mut query = self.world.query::<(
-                Entity, &StableId, &Position, &Team, &CombatStats, &AttackOrder,
+                Entity, &StableId, &Position, &Team, &CombatStats, &AttackOrder, Option<&Stance>,
             )>();
             query.iter(&self.world).map(|(entity, id, p, team, stats, order)| (
                 entity, id.0, order.target_id, p.x, p.z, team.0,
-                stats.damage, stats.range, stats.attack_interval,
+                stats.damage, stats.range, stats.attack_interval, stance.copied().unwrap_or_default(),
             )).collect()
         };
 
         let mut hits: Vec<(u32, f32)> = Vec::new();
         let mut shots: Vec<(f32, f32, u32, u8, f32)> = Vec::new();
-        for (attacker, attacker_id, target_id, ax, az, team, damage, range, attack_interval) in actors {
+        for (attacker, attacker_id, target_id, ax, az, team, damage, range, attack_interval, stance) in actors {
             let Some(target) = self.entity_by_id(target_id) else {
                 if let Some(mut order) = self.world.get_mut::<AttackOrder>(attacker) {
                     order.target_id = 0;
@@ -325,7 +364,7 @@ impl GameWorld {
             drop(order);
 
             // If the target moved away after the attacker arrived, resume pursuit.
-            if !in_range {
+            if !in_range && stance != Stance::Hold {
                 let needs_repath = self.world.get::<MoveOrder>(attacker)
                     .map(|movement| movement.path.is_empty()).unwrap_or(false);
                 if needs_repath {
@@ -412,6 +451,7 @@ impl GameWorld {
             moving: movement.map(|o| !o.path.is_empty()).unwrap_or(false),
             attacking: attack.map(|order| order.target_id != 0).unwrap_or(false),
             unit_class: *class,
+            stance: self.world.get::<Stance>(entity).copied(),
         }).collect()
     }
 }
