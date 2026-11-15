@@ -60,7 +60,7 @@ impl GameWorld {
         let Some(entity) = entity else { return false; };
 
         let start = {
-            let Ok(position) = self.world.get::<&Position>(entity) else { return false; };
+            let Ok(position) = self.world.get::<Position>(entity) else { return false; };
             (position.x.floor() as i32, position.z.floor() as i32)
         };
         let path = map.find_path(start, goal);
