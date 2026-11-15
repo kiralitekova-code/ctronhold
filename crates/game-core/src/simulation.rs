@@ -86,8 +86,18 @@ impl GameWorld {
         let dt = delta_seconds.clamp(0.0, 0.1);
         self.elapsed += dt as f64;
 
-        let mut query = self.world.query::<(&mut Position, &mut MoveOrder)>();
-        for (mut position, mut order) in query.iter_mut(&mut self.world) {
+        // Read a stable position snapshot first. Movement proposals are checked
+        // against it so two soldiers cannot occupy the same space in one frame.
+        let unit_positions: Vec<(u32, f32, f32)> = {
+            let mut query = self.world.query::<(&StableId, &Position, &Sprite)>();
+            query.iter(&self.world)
+                .filter(|(_, _, sprite)| sprite.kind == "unit")
+                .map(|(id, position, _)| (id.0, position.x, position.z))
+                .collect()
+        };
+
+        let mut query = self.world.query::<(&StableId, &mut Position, &mut MoveOrder)>();
+        for (id, mut position, mut order) in query.iter_mut(&mut self.world) {
             if order.path.is_empty() || order.next_step >= order.path.len() { continue; }
 
             let [cell_x, cell_z] = order.path[order.next_step];
@@ -97,18 +107,33 @@ impl GameWorld {
             let dz = target_z - position.z;
             let distance = (dx * dx + dz * dz).sqrt();
             let step = 3.5 * dt;
+            let (next_x, next_z) = if distance <= step.max(0.0001) {
+                (target_x, target_z)
+            } else if distance > 0.0 {
+                (position.x + dx / distance * step, position.z + dz / distance * step)
+            } else {
+                (position.x, position.z)
+            };
 
+            // Keep a small personal-space radius. If another soldier currently
+            // occupies the proposed position, wait for that soldier to clear it.
+            let collision = unit_positions.iter()
+                .filter(|(other_id, _, _)| *other_id != id.0)
+                .any(|(_, other_x, other_z)| {
+                    let sx = next_x - other_x;
+                    let sz = next_z - other_z;
+                    sx * sx + sz * sz < 0.49
+                });
+            if collision { continue; }
+
+            position.x = next_x;
+            position.z = next_z;
             if distance <= step.max(0.0001) {
-                position.x = target_x;
-                position.z = target_z;
                 order.next_step += 1;
                 if order.next_step >= order.path.len() {
                     order.path.clear();
                     order.next_step = 0;
                 }
-            } else if distance > 0.0 {
-                position.x += dx / distance * step;
-                position.z += dz / distance * step;
             }
         }
     }
