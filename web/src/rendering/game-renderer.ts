@@ -159,10 +159,8 @@ export class GameRenderer {
         dz = Math.round(index - middle);
       } else {
         // Symmetric shallow wedge: point unit first, then pairs behind it.
-        const row = Math.floor((Math.sqrt(8 * index + 1) - 1) / 2);
-        const firstInRow = row * (row + 1) / 2;
-        const slot = index - firstInRow;
-        dx = slot * 2 - row;
+        const row = Math.ceil(index / 2);
+        dx = index % 2 === 1 ? -row : row;
         dz = row;
       }
       this.engine!.issue_move(id, goalX + dx, goalZ + dz);
