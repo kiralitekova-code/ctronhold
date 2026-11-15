@@ -8,6 +8,9 @@ pub struct Position {
     pub z: f32,
 }
 
+#[derive(Component, Clone, Copy, Debug)]
+pub struct StableId(pub u32);
+
 #[derive(Component, Clone, Debug, Serialize)]
 pub struct Sprite {
     /// Renderer-facing primitive/material key, not a texture asset.
@@ -29,4 +32,11 @@ impl Health {
     pub fn damage(&mut self, amount: f32) {
         self.current = (self.current - amount.max(0.0)).max(0.0);
     }
+}
+
+/// A path-following order. The first cell is the unit's current cell.
+#[derive(Component, Clone, Debug, Default)]
+pub struct MoveOrder {
+    pub path: Vec<[i32; 2]>,
+    pub next_step: usize,
 }
