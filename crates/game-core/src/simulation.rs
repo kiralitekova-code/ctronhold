@@ -87,12 +87,13 @@ impl GameWorld {
         self.elapsed += dt as f64;
 
         // Read a stable position snapshot first. Movement proposals are checked
-        // against it so two soldiers cannot occupy the same space in one frame.
+        // against other moving soldiers. Idle soldiers are deliberately ignored so a
+        // single-unit order is not permanently blocked by the rest of its squad.
         let unit_positions: Vec<(u32, f32, f32)> = {
-            let mut query = self.world.query::<(&StableId, &Position, &Sprite)>();
+            let mut query = self.world.query::<(&StableId, &Position, &Sprite, &MoveOrder)>();
             query.iter(&self.world)
-                .filter(|(_, _, sprite)| sprite.kind == "unit")
-                .map(|(id, position, _)| (id.0, position.x, position.z))
+                .filter(|(_, _, sprite, order)| sprite.kind == "unit" && !order.path.is_empty())
+                .map(|(id, position, _, _)| (id.0, position.x, position.z))
                 .collect()
         };
 
