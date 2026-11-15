@@ -1,0 +1,13 @@
+[package]
+name = "wasm-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+game-core = { path = "../game-core" }
+wasm-bindgen.workspace = true
+serde-wasm-bindgen.workspace = true
