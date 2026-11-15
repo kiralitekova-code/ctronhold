@@ -449,6 +449,20 @@ mod tests {
 
 
     #[test]
+    fn local_avoidance_routes_mover_around_idle_unit() {
+        let mut game = GameWorld::new();
+        assert!(game.move_unit(2, (8, 2), &GridMap));
+        for _ in 0..80 { game.update(0.1, &GridMap); }
+        let snapshot = game.snapshot();
+        let mover = snapshot.iter().find(|entity| entity.id == 2).unwrap();
+        let blocker = snapshot.iter().find(|entity| entity.id == 3).unwrap();
+        let separation_sq = (mover.position.x - blocker.position.x).powi(2)
+            + (mover.position.z - blocker.position.z).powi(2);
+        assert!(mover.position.x > 3.5, "mover should make progress around the blocker");
+        assert!(separation_sq >= 0.36, "units should preserve local personal space");
+    }
+
+    #[test]
     fn unit_classes_have_distinct_combat_profiles() {
         let sword = UnitClass::Swordsman.combat_stats();
         let spear = UnitClass::Spearman.combat_stats();
