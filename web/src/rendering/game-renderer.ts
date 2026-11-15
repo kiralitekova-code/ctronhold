@@ -295,7 +295,7 @@ export class GameRenderer {
         const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(...entity.sprite.color) });
         object = new THREE.Mesh(geometry, material);
         object.userData.entityId = entity.id;
-        object.userData.team = entity.team;
+        object.userData.team = entity.sprite.kind === "unit" ? entity.team : 0;
         (object as THREE.Mesh).castShadow = true;
         this.scene.add(object);
         this.objects.set(entity.id, object);
