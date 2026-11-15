@@ -2,7 +2,7 @@ use bevy_ecs::prelude::{Entity, World};
 use serde::Serialize;
 
 use crate::components::{
-    AttackOrder, CombatStats, Health, MoveOrder, Position, Sprite, StableId, Team,
+    AttackOrder, CombatStats, Health, MoveOrder, Position, Projectile, Sprite, StableId, Team, UnitClass,
 };
 use crate::navigation::GridMap;
 
@@ -15,6 +15,7 @@ pub struct EntitySnapshot {
     pub team: u8,
     pub moving: bool,
     pub attacking: bool,
+    pub unit_class: Option<UnitClass>,
 }
 
 pub struct GameWorld {
@@ -36,27 +37,26 @@ impl GameWorld {
             Health::new(1000.0),
         );
 
-        for (x, z) in [(3.0, 2.0), (4.0, 2.0), (3.0, 3.0), (4.0, 3.0), (5.0, 2.0)] {
-            let entity = game.spawn(
-                Position { x, y: 0.0, z },
+        let friendly = [
+            (3.0, 2.0, UnitClass::Swordsman), (4.0, 2.0, UnitClass::Swordsman),
+            (3.0, 3.0, UnitClass::Spearman), (4.0, 3.0, UnitClass::Spearman),
+            (5.0, 2.0, UnitClass::Archer),
+        ];
+        for (x, z, class) in friendly {
+            let entity = game.spawn(Position { x, y: 0.0, z },
                 Sprite { kind: "unit".into(), color: [0.25, 0.45, 0.85] },
-                Health::new(100.0),
-            );
-            game.world.entity_mut(entity).insert((
-                Team(1), CombatStats::default(), MoveOrder::default(),
-            ));
+                Health::new(class.max_health()));
+            game.world.entity_mut(entity).insert((Team(1), class.combat_stats(), class, MoveOrder::default()));
         }
-
-        // A small hostile patrol in open ground west of the starting squad.
-        for (x, z) in [(-5.0, 2.0), (-6.0, 2.0), (-5.0, 3.0)] {
-            let entity = game.spawn(
-                Position { x, y: 0.0, z },
+        let hostile = [
+            (-5.0, 2.0, UnitClass::Swordsman), (-6.0, 2.0, UnitClass::Spearman),
+            (-5.0, 3.0, UnitClass::Archer),
+        ];
+        for (x, z, class) in hostile {
+            let entity = game.spawn(Position { x, y: 0.0, z },
                 Sprite { kind: "unit".into(), color: [0.82, 0.25, 0.18] },
-                Health::new(100.0),
-            );
-            game.world.entity_mut(entity).insert((
-                Team(2), CombatStats::default(), MoveOrder::default(),
-            ));
+                Health::new(class.max_health()));
+            game.world.entity_mut(entity).insert((Team(2), class.combat_stats(), class, MoveOrder::default()));
         }
         game
     }
@@ -124,22 +124,23 @@ impl GameWorld {
         if distance_sq > range * range {
             let start = (ax.floor() as i32, az.floor() as i32);
             let target_cell = (tx.floor() as i32, tz.floor() as i32);
-            // Reserve distinct approach cells when several soldiers focus the same target.
             let reserved_goals: Vec<[i32; 2]> = {
                 let mut query = self.world.query::<(&AttackOrder, &MoveOrder)>();
-                query.iter(&self.world)
-                    .filter(|(order, _)| order.target_id == target_id)
-                    .filter_map(|(_, movement)| movement.path.last().copied())
-                    .collect()
+                query.iter(&self.world).filter(|(order, _)| order.target_id == target_id)
+                    .filter_map(|(_, movement)| movement.path.last().copied()).collect()
             };
+            let radius = range.ceil() as i32;
             let mut candidates: Vec<(usize, usize, Vec<[i32; 2]>)> = Vec::new();
-            for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                let goal = (target_cell.0 + dx, target_cell.1 + dz);
-                let path = map.find_path(start, goal);
-                if !path.is_empty() {
-                    let occupied = reserved_goals.iter()
-                        .filter(|cell| **cell == [goal.0, goal.1]).count();
-                    candidates.push((path.len() + occupied * 4, path.len(), path));
+            for dx in -radius..=radius {
+                for dz in -radius..=radius {
+                    let goal = (target_cell.0 + dx, target_cell.1 + dz);
+                    let distance_sq = (dx * dx + dz * dz) as f32;
+                    if (dx == 0 && dz == 0) || distance_sq > (range - 0.25).powi(2) { continue; }
+                    let path = map.find_path(start, goal);
+                    if !path.is_empty() {
+                        let occupied = reserved_goals.iter().filter(|cell| **cell == [goal.0, goal.1]).count();
+                        candidates.push((path.len() + occupied * 4, path.len(), path));
+                    }
                 }
             }
             candidates.sort_by_key(|(score, length, _)| (*score, *length));
@@ -169,8 +170,8 @@ impl GameWorld {
                 .collect()
         };
 
-        let mut query = self.world.query::<(&StableId, &mut Position, &mut MoveOrder)>();
-        for (id, mut position, mut order) in query.iter_mut(&mut self.world) {
+        let mut query = self.world.query::<(&StableId, &mut Position, &mut MoveOrder, Option<&UnitClass>)>();
+        for (id, mut position, mut order, class) in query.iter_mut(&mut self.world) {
             if order.path.is_empty() || order.next_step >= order.path.len() { continue; }
             let [cell_x, cell_z] = order.path[order.next_step];
             let target_x = cell_x as f32 + 0.5;
@@ -178,7 +179,7 @@ impl GameWorld {
             let dx = target_x - position.x;
             let dz = target_z - position.z;
             let distance = (dx * dx + dz * dz).sqrt();
-            let step = 3.5 * dt;
+            let step = class.map(|unit| unit.move_speed()).unwrap_or(3.5) * dt;
             let (next_x, next_z) = if distance <= step.max(0.0001) {
                 (target_x, target_z)
             } else if distance > 0.0 {
@@ -202,16 +203,18 @@ impl GameWorld {
         }
 
         self.update_combat(dt, map);
+        self.update_projectiles(dt);
         self.update_ai(map);
     }
 
     fn update_ai(&mut self, map: &GridMap) {
         const AGGRO_RANGE: f32 = 12.0;
         let (hostiles, friendlies): (Vec<(u32, f32, f32, u32)>, Vec<(u32, f32, f32)>) = {
-            let mut query = self.world.query::<(&StableId, &Position, &Team, Option<&AttackOrder>)>();
+            let mut query = self.world.query::<(&StableId, &Position, &Team, &Sprite, Option<&AttackOrder>)>();
             let mut hostiles = Vec::new();
             let mut friendlies = Vec::new();
-            for (id, position, team, attack) in query.iter(&self.world) {
+            for (id, position, team, sprite, attack) in query.iter(&self.world) {
+                if sprite.kind != "unit" { continue; }
                 if team.0 == 2 {
                     hostiles.push((id.0, position.x, position.z, attack.map(|a| a.target_id).unwrap_or(0)));
                 } else if team.0 == 1 {
@@ -249,6 +252,7 @@ impl GameWorld {
         };
 
         let mut hits: Vec<(u32, f32)> = Vec::new();
+        let mut shots: Vec<(f32, f32, u32, u8, f32)> = Vec::new();
         for (attacker, attacker_id, target_id, ax, az, team, damage, range, attack_interval) in actors {
             let Some(target) = self.entity_by_id(target_id) else {
                 if let Some(mut order) = self.world.get_mut::<AttackOrder>(attacker) {
@@ -271,7 +275,8 @@ impl GameWorld {
             order.cooldown = (order.cooldown - dt).max(0.0);
             if in_range && order.cooldown <= 0.0 {
                 order.cooldown = attack_interval;
-                hits.push((target_id, damage));
+                if range > 3.0 { shots.push((ax, az, target_id, team, damage)); }
+                else { hits.push((target_id, damage)); }
             }
             drop(order);
 
@@ -287,10 +292,16 @@ impl GameWorld {
 
         for (target_id, damage) in hits {
             if let Some(target) = self.entity_by_id(target_id) {
-                if let Some(mut health) = self.world.get_mut::<Health>(target) {
-                    health.damage(damage);
-                }
+                if let Some(mut health) = self.world.get_mut::<Health>(target) { health.damage(damage); }
             }
+        }
+        for (x, z, target_id, team, damage) in shots {
+            let projectile = self.spawn(
+                Position { x, y: 0.9, z },
+                Sprite { kind: "projectile".into(), color: if team == 1 { [0.95, 0.86, 0.42] } else { [0.95, 0.38, 0.25] } },
+                Health::new(1.0),
+            );
+            self.world.entity_mut(projectile).insert((Team(team), Projectile { target_id, damage, speed: 12.0 }));
         }
 
         let dead: Vec<Entity> = {
@@ -301,23 +312,56 @@ impl GameWorld {
         for entity in dead { self.world.despawn(entity); }
     }
 
+    fn update_projectiles(&mut self, dt: f32) {
+        let projectiles: Vec<(Entity, f32, f32, u32, f32, f32)> = {
+            let mut query = self.world.query::<(Entity, &Position, &Projectile)>();
+            query.iter(&self.world).map(|(entity, p, shot)| (entity, p.x, p.z, shot.target_id, shot.damage, shot.speed)).collect()
+        };
+        let mut impacts = Vec::new();
+        let mut despawn = Vec::new();
+        for (entity, x, z, target_id, damage, speed) in projectiles {
+            let Some(target) = self.entity_by_id(target_id) else { despawn.push(entity); continue; };
+            let Some(target_position) = self.world.get::<Position>(target) else { despawn.push(entity); continue; };
+            let dx = target_position.x - x;
+            let dz = target_position.z - z;
+            let distance = (dx * dx + dz * dz).sqrt();
+            let travel = speed * dt;
+            if distance <= travel + 0.3 {
+                impacts.push((target_id, damage));
+                despawn.push(entity);
+            } else if distance > 0.0 {
+                if let Some(mut p) = self.world.get_mut::<Position>(entity) {
+                    p.x += dx / distance * travel;
+                    p.z += dz / distance * travel;
+                }
+            }
+        }
+        for (target_id, damage) in impacts {
+            if let Some(target) = self.entity_by_id(target_id) {
+                if let Some(mut health) = self.world.get_mut::<Health>(target) { health.damage(damage); }
+            }
+        }
+        for entity in despawn { self.world.despawn(entity); }
+        let dead: Vec<Entity> = {
+            let mut query = self.world.query::<(Entity, &Health)>();
+            query.iter(&self.world).filter(|(_, health)| health.current <= 0.0).map(|(e, _)| e).collect()
+        };
+        for entity in dead { self.world.despawn(entity); }
+    }
+
     pub fn elapsed(&self) -> f64 { self.elapsed }
 
     pub fn snapshot(&mut self) -> Vec<EntitySnapshot> {
         let mut query = self.world.query::<(
             &StableId, &Position, &Sprite, &Health, Option<&Team>,
-            Option<&MoveOrder>, Option<&AttackOrder>,
+            Option<&MoveOrder>, Option<&AttackOrder>, Option<&UnitClass>,
         )>();
-        query.iter(&self.world).map(|(id, position, sprite, health, team, movement, attack)| {
-            EntitySnapshot {
-                id: id.0,
-                position: *position,
-                sprite: sprite.clone(),
-                health: *health,
-                team: team.map(|t| t.0).unwrap_or(0),
-                moving: movement.map(|o| !o.path.is_empty()).unwrap_or(false),
-                attacking: attack.map(|order| order.target_id != 0).unwrap_or(false),
-            }
+        query.iter(&self.world).map(|(id, position, sprite, health, team, movement, attack, class)| EntitySnapshot {
+            id: id.0, position: *position, sprite: sprite.clone(), health: *health,
+            team: team.map(|t| t.0).unwrap_or(0),
+            moving: movement.map(|o| !o.path.is_empty()).unwrap_or(false),
+            attacking: attack.map(|order| order.target_id != 0).unwrap_or(false),
+            unit_class: *class,
         }).collect()
     }
 }
@@ -384,6 +428,28 @@ mod tests {
         let new_target = game.world.get::<AttackOrder>(hostile).unwrap().target_id;
         assert_ne!(new_target, 0);
         assert_ne!(new_target, first_target);
+    }
+
+
+    #[test]
+    fn unit_classes_have_distinct_combat_profiles() {
+        let sword = UnitClass::Swordsman.combat_stats();
+        let spear = UnitClass::Spearman.combat_stats();
+        let archer = UnitClass::Archer.combat_stats();
+        assert!(spear.range > sword.range);
+        assert!(spear.damage > sword.damage);
+        assert!(archer.range > spear.range);
+        assert!(UnitClass::Spearman.max_health() > UnitClass::Swordsman.max_health());
+        assert!(UnitClass::Archer.max_health() < UnitClass::Swordsman.max_health());
+    }
+
+    #[test]
+    fn archer_projectile_travels_and_damages_target() {
+        let mut game = GameWorld::new();
+        assert!(game.issue_attack(6, 7, &GridMap));
+        for _ in 0..100 { game.update(0.1, &GridMap); }
+        let enemy = game.snapshot().into_iter().find(|e| e.id == 7).unwrap();
+        assert!(enemy.health.current < UnitClass::Swordsman.max_health());
     }
 
     #[test]
