@@ -7,6 +7,7 @@ type SnapshotEntity = {
   position: { x: number; y: number; z: number };
   sprite: { kind: string; color: [number, number, number] };
   team: number;
+  health: { current: number; max: number };
   moving: boolean;
   attacking: boolean;
 };
@@ -21,6 +22,7 @@ export class GameRenderer {
   private engine?: InstanceType<WasmModule["GameEngine"]>;
   private objects = new Map<number, THREE.Object3D>();
   private selectionRings = new Map<number, THREE.Mesh>();
+  private healthBars = new Map<number, { group: THREE.Group; fill: THREE.Mesh }>();
   private selectedIds = new Set<number>();
   private raycaster = new THREE.Raycaster();
   private ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -272,6 +274,11 @@ export class GameRenderer {
         this.scene.remove(ring);
         this.selectionRings.delete(id);
       }
+      const healthBar = this.healthBars.get(id);
+      if (healthBar) {
+        this.scene.remove(healthBar.group);
+        this.healthBars.delete(id);
+      }
     }
     for (const entity of entities) {
       let object = this.objects.get(entity.id);
@@ -297,6 +304,21 @@ export class GameRenderer {
           ring.visible = false;
           this.scene.add(ring);
           this.selectionRings.set(entity.id, ring);
+
+          const healthGroup = new THREE.Group();
+          const barBack = new THREE.Mesh(
+            new THREE.BoxGeometry(0.9, 0.1, 0.04),
+            new THREE.MeshBasicMaterial({ color: 0x25251f, depthTest: false })
+          );
+          const fill = new THREE.Mesh(
+            new THREE.BoxGeometry(0.86, 0.065, 0.045),
+            new THREE.MeshBasicMaterial({ color: 0x66c46a, depthTest: false })
+          );
+          fill.position.z = 0.03;
+          healthGroup.add(barBack, fill);
+          healthGroup.renderOrder = 5;
+          this.scene.add(healthGroup);
+          this.healthBars.set(entity.id, { group: healthGroup, fill });
         }
       }
       object.position.set(entity.position.x,
@@ -306,6 +328,16 @@ export class GameRenderer {
       if (ring) {
         ring.position.x = entity.position.x;
         ring.position.z = entity.position.z;
+      }
+      const healthBar = this.healthBars.get(entity.id);
+      if (healthBar) {
+        const ratio = Math.max(0, Math.min(1, entity.health.current / Math.max(entity.health.max, 1)));
+        healthBar.group.position.set(entity.position.x, 1.28, entity.position.z);
+        healthBar.group.quaternion.copy(this.camera.quaternion);
+        healthBar.fill.scale.x = ratio;
+        healthBar.fill.position.x = -0.43 * (1 - ratio);
+        const material = healthBar.fill.material as THREE.MeshBasicMaterial;
+        material.color.set(ratio > 0.6 ? 0x66c46a : ratio > 0.3 ? 0xe2b84e : 0xd94b43);
       }
     }
   }
