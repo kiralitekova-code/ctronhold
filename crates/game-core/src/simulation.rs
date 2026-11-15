@@ -162,13 +162,16 @@ impl GameWorld {
         let dt = delta_seconds.clamp(0.0, 0.1);
         self.elapsed += dt as f64;
 
-        let unit_positions: Vec<(u32, f32, f32)> = {
-            let mut query = self.world.query::<(&StableId, &Position, &Sprite, &MoveOrder)>();
+        // Keep a live position index and update it after each accepted move.
+        // This avoids checking every mover against stale frame-start coordinates.
+        let mut unit_positions: Vec<(u32, f32, f32)> = {
+            let mut query = self.world.query::<(&StableId, &Position, &Sprite)>();
             query.iter(&self.world)
-                .filter(|(_, _, sprite, order)| sprite.kind == "unit" && !order.path.is_empty())
-                .map(|(id, p, _, _)| (id.0, p.x, p.z))
+                .filter(|(_, _, sprite)| sprite.kind == "unit")
+                .map(|(id, p, _)| (id.0, p.x, p.z))
                 .collect()
         };
+        unit_positions.sort_by_key(|(id, _, _)| *id);
 
         let mut query = self.world.query::<(&StableId, &mut Position, &mut MoveOrder, Option<&UnitClass>)>();
         for (id, mut position, mut order, class) in query.iter_mut(&mut self.world) {
@@ -180,24 +183,38 @@ impl GameWorld {
             let dz = target_z - position.z;
             let distance = (dx * dx + dz * dz).sqrt();
             let step = class.map(|unit| unit.move_speed()).unwrap_or(3.5) * dt;
-            let (next_x, next_z) = if distance <= step.max(0.0001) {
-                (target_x, target_z)
-            } else if distance > 0.0 {
-                (position.x + dx / distance * step, position.z + dz / distance * step)
-            } else { (position.x, position.z) };
+            let travel = step.min(distance);
+            let (dir_x, dir_z) = if distance > 0.0001 { (dx / distance, dz / distance) } else { (0.0, 0.0) };
+            let direct = (position.x + dir_x * travel, position.z + dir_z * travel);
+            let side = if id.0 % 2 == 0 { 1.0_f32 } else { -1.0_f32 };
+            let candidates = [
+                direct,
+                (direct.0 - dir_z * 0.65 * side, direct.1 + dir_x * 0.65 * side),
+                (direct.0 + dir_z * 0.65 * side, direct.1 - dir_x * 0.65 * side),
+            ];
 
-            let collision = unit_positions.iter()
-                .filter(|(other_id, _, _)| *other_id != id.0)
-                .any(|(_, ox, oz)| (next_x - ox).powi(2) + (next_z - oz).powi(2) < 0.49);
-            if collision { continue; }
+            let accepted = candidates.into_iter().find(|(nx, nz)| {
+                let cell_x = nx.floor() as i32;
+                let cell_z = nz.floor() as i32;
+                map.is_walkable(cell_x, cell_z)
+                    && !unit_positions.iter()
+                        .filter(|(other_id, _, _)| *other_id != id.0)
+                        .any(|(_, ox, oz)| (nx - ox).powi(2) + (nz - oz).powi(2) < 0.36)
+            });
 
-            position.x = next_x;
-            position.z = next_z;
-            if distance <= step.max(0.0001) {
-                order.next_step += 1;
-                if order.next_step >= order.path.len() {
-                    order.path.clear();
-                    order.next_step = 0;
+            if let Some((next_x, next_z)) = accepted {
+                position.x = next_x;
+                position.z = next_z;
+                if let Some(entry) = unit_positions.iter_mut().find(|(other_id, _, _)| *other_id == id.0) {
+                    entry.1 = next_x;
+                    entry.2 = next_z;
+                }
+                if distance <= step.max(0.0001) && (next_x - target_x).powi(2) + (next_z - target_z).powi(2) < 0.04 {
+                    order.next_step += 1;
+                    if order.next_step >= order.path.len() {
+                        order.path.clear();
+                        order.next_step = 0;
+                    }
                 }
             }
         }
