@@ -93,7 +93,7 @@ impl GameWorld {
         true
     }
 
-    /// Orders a unit to close to melee range, then attack an enemy unit.
+    /// Orders a unit to move into its class-specific attack range, then engage an enemy.
     pub fn issue_attack(&mut self, attacker_id: u32, target_id: u32, map: &GridMap) -> bool {
         if attacker_id == target_id { return false; }
         let (Some(attacker), Some(target)) =
