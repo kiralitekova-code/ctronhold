@@ -11,6 +11,11 @@ export class GameRenderer {
   private controls: RtsCamera;
   private engine?: InstanceType<WasmModule["GameEngine"]>;
   private objects = new Map<number, THREE.Object3D>();
+  private raycaster = new THREE.Raycaster();
+  private ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private pointer = new THREE.Vector2();
+  private selection: THREE.Mesh;
+  private onCanvasClick = (event: MouseEvent) => this.selectCell(event);
 
   constructor(private host: HTMLElement) {
     this.scene.background = new THREE.Color(0x9bb7bd);
@@ -19,6 +24,24 @@ export class GameRenderer {
     this.renderer.shadowMap.enabled = true;
     host.appendChild(this.renderer.domElement);
     this.controls = new RtsCamera(this.camera, this.renderer.domElement);
+
+    const grid = new THREE.GridHelper(100, 100, 0x34472c, 0x526b40);
+    grid.position.y = 0.015;
+    this.scene.add(grid);
+
+    this.selection = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.96, 0.96),
+      new THREE.MeshBasicMaterial({
+        color: 0xffdf76, transparent: true, opacity: 0.45,
+        side: THREE.DoubleSide, depthWrite: false
+      })
+    );
+    this.selection.rotation.x = -Math.PI / 2;
+    this.selection.position.y = 0.04;
+    this.selection.visible = false;
+    this.scene.add(this.selection);
+
+    this.renderer.domElement.addEventListener("click", this.onCanvasClick);
     this.resize();
     window.addEventListener("resize", this.resize);
   }
@@ -34,13 +57,13 @@ export class GameRenderer {
     sun.castShadow = true;
     this.scene.add(sun);
 
-    const ground = new THREE.Mesh(
+    const groundMesh = new THREE.Mesh(
       new THREE.PlaneGeometry(100, 100),
       new THREE.MeshStandardMaterial({ color: 0x718b55 })
     );
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
+    groundMesh.rotation.x = -Math.PI / 2;
+    groundMesh.receiveShadow = true;
+    this.scene.add(groundMesh);
     this.syncEntities();
   };
 
@@ -48,6 +71,22 @@ export class GameRenderer {
     this.controls.update(dt);
     this.engine?.update(dt);
     this.syncEntities();
+  }
+
+  private selectCell(event: MouseEvent) {
+    if (event.button !== 0) return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.pointer.set(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const point = new THREE.Vector3();
+    if (this.raycaster.ray.intersectPlane(this.ground, point)) {
+      // World grid is 1x1; snap to the centre of the hit cell.
+      this.selection.position.set(Math.floor(point.x) + 0.5, 0.04, Math.floor(point.z) + 0.5);
+      this.selection.visible = true;
+    }
   }
 
   private syncEntities() {
@@ -87,6 +126,7 @@ export class GameRenderer {
 
   dispose() {
     window.removeEventListener("resize", this.resize);
+    this.renderer.domElement.removeEventListener("click", this.onCanvasClick);
     this.controls.dispose();
     this.renderer.dispose();
     this.host.replaceChildren();
