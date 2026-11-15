@@ -15,6 +15,7 @@ export class GameRenderer {
   private ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private pointer = new THREE.Vector2();
   private selection: THREE.Mesh;
+  private routeLine?: THREE.Line;
   private onCanvasClick = (event: MouseEvent) => this.selectCell(event);
 
   constructor(private host: HTMLElement) {
@@ -64,6 +65,8 @@ export class GameRenderer {
     groundMesh.rotation.x = -Math.PI / 2;
     groundMesh.receiveShadow = true;
     this.scene.add(groundMesh);
+
+    this.renderObstacles();
     this.syncEntities();
   };
 
@@ -73,8 +76,22 @@ export class GameRenderer {
     this.syncEntities();
   }
 
+  private renderObstacles() {
+    if (!this.engine) return;
+    const cells = this.engine.blocked_cells() as number[][];
+    const geometry = new THREE.BoxGeometry(0.92, 0.65, 0.92);
+    const material = new THREE.MeshStandardMaterial({ color: 0x77766c, roughness: 1 });
+    for (const [x, z] of cells) {
+      const rock = new THREE.Mesh(geometry, material);
+      rock.position.set(x + 0.5, 0.32, z + 0.5);
+      rock.castShadow = true;
+      rock.receiveShadow = true;
+      this.scene.add(rock);
+    }
+  }
+
   private selectCell(event: MouseEvent) {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || !this.engine) return;
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.pointer.set(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -82,10 +99,28 @@ export class GameRenderer {
     );
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const point = new THREE.Vector3();
-    if (this.raycaster.ray.intersectPlane(this.ground, point)) {
-      // World grid is 1x1; snap to the centre of the hit cell.
-      this.selection.position.set(Math.floor(point.x) + 0.5, 0.04, Math.floor(point.z) + 0.5);
-      this.selection.visible = true;
+    if (!this.raycaster.ray.intersectPlane(this.ground, point)) return;
+
+    const x = Math.floor(point.x);
+    const z = Math.floor(point.z);
+    this.selection.position.set(x + 0.5, 0.04, z + 0.5);
+    this.selection.visible = true;
+
+    const path = this.engine.find_path(3, 2, x, z) as number[][];
+    if (this.routeLine) {
+      this.scene.remove(this.routeLine);
+      this.routeLine.geometry.dispose();
+      (this.routeLine.material as THREE.Material).dispose();
+      this.routeLine = undefined;
+    }
+    if (path.length > 1) {
+      const points = path.map(([px, pz]) => new THREE.Vector3(px + 0.5, 0.09, pz + 0.5));
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      this.routeLine = new THREE.Line(
+        geometry,
+        new THREE.LineBasicMaterial({ color: 0xffd166, linewidth: 2 })
+      );
+      this.scene.add(this.routeLine);
     }
   }
 
