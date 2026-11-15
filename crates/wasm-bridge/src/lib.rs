@@ -37,6 +37,10 @@ impl GameEngine {
         self.world.move_unit(unit_id, (goal_x, goal_z), &self.map)
     }
 
+    pub fn issue_attack(&mut self, attacker_id: u32, target_id: u32) -> bool {
+        self.world.issue_attack(attacker_id, target_id, &self.map)
+    }
+
     pub fn elapsed(&self) -> f64 { self.world.elapsed() }
 }
 
