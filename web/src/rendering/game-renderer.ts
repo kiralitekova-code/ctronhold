@@ -10,6 +10,7 @@ type SnapshotEntity = {
   health: { current: number; max: number };
   moving: boolean;
   attacking: boolean;
+  unit_class?: "swordsman" | "spearman" | "archer" | null;
 };
 
 type Formation = "line" | "column" | "wedge";
@@ -275,7 +276,7 @@ export class GameRenderer {
         this.selectionRings.delete(id);
       }
       const healthBar = this.healthBars.get(id);
-      if (healthBar) {
+      if (healthBar && entity.sprite.kind === "unit") {
         this.scene.remove(healthBar.group);
         this.healthBars.delete(id);
       }
@@ -285,7 +286,12 @@ export class GameRenderer {
       if (!object) {
         const geometry = entity.sprite.kind === "castle"
           ? new THREE.BoxGeometry(2.5, 2.5, 2.5)
-          : new THREE.CapsuleGeometry(0.35, 0.8, 4, 8);
+          : entity.sprite.kind === "projectile"
+            ? new THREE.SphereGeometry(0.12, 8, 8)
+            : new THREE.CapsuleGeometry(
+                entity.unit_class === "spearman" ? 0.3 : entity.unit_class === "archer" ? 0.27 : 0.35,
+                entity.unit_class === "spearman" ? 0.95 : entity.unit_class === "archer" ? 0.65 : 0.8, 4, 8
+              );
         const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(...entity.sprite.color) });
         object = new THREE.Mesh(geometry, material);
         object.userData.entityId = entity.id;
@@ -322,7 +328,7 @@ export class GameRenderer {
         }
       }
       object.position.set(entity.position.x,
-        entity.position.y + (entity.sprite.kind === "castle" ? 1.25 : 0.6),
+        entity.position.y + (entity.sprite.kind === "castle" ? 1.25 : entity.sprite.kind === "projectile" ? 0 : 0.6),
         entity.position.z);
       const ring = this.selectionRings.get(entity.id);
       if (ring) {
