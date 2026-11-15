@@ -25,13 +25,33 @@ pub struct Health {
 }
 
 impl Health {
-    pub fn new(max: f32) -> Self {
-        Self { current: max, max }
-    }
+    pub fn new(max: f32) -> Self { Self { current: max, max } }
 
     pub fn damage(&mut self, amount: f32) {
         self.current = (self.current - amount.max(0.0)).max(0.0);
     }
+}
+
+#[derive(Component, Clone, Copy, Debug, Serialize)]
+pub struct Team(pub u8);
+
+#[derive(Component, Clone, Copy, Debug, Serialize)]
+pub struct CombatStats {
+    pub damage: f32,
+    pub range: f32,
+    pub attack_interval: f32,
+}
+
+impl Default for CombatStats {
+    fn default() -> Self {
+        Self { damage: 12.0, range: 1.6, attack_interval: 1.0 }
+    }
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+pub struct AttackOrder {
+    pub target_id: u32,
+    pub cooldown: f32,
 }
 
 /// A path-following order. The first cell is the unit's current cell.
