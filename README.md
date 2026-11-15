@@ -14,7 +14,7 @@ An original browser-based RTS prototype. It uses familiar real-time strategy ide
 - Three.js RTS camera with WASD/arrow movement, edge scrolling, zoom, and right-mouse drag.
 - A 64x64 world grid with a generated stone ridge, a traversable gate, and a rock field.
 - The starting force contains five independently simulated soldiers with stable IDs. Left-click a soldier to select it; Shift+left-click adds or removes soldiers from the selection. Left-clicking terrain clears the selection.
-- Right-click issues movement orders to the selected squad. Formation keys `1`, `2`, and `3` choose line, column, and wedge respectively; the browser assigns distinct formation slots and Rust computes each unit's A* path and advances movement.
+- Right-click issues movement orders to the selected squad. Formation keys `1`, `2`, and `3` choose line, column, and wedge respectively; the browser assigns distinct formation slots and Rust computes each unit's A* path and advances movement. A basic personal-space check prevents active movers from stepping into another moving soldier.
 - Impassable cells are shown as stone blocks. Castle and soldiers are primitive development placeholders, not final art.
 - Castle and unit are still primitive development placeholders, not final art.
 
