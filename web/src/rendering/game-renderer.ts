@@ -11,6 +11,7 @@ type SnapshotEntity = {
   moving: boolean;
   attacking: boolean;
   unit_class?: "swordsman" | "spearman" | "archer" | null;
+  stance?: "aggressive" | "defensive" | "hold" | null;
 };
 
 type Formation = "line" | "column" | "wedge";
@@ -43,6 +44,12 @@ export class GameRenderer {
     if (event.key === "1") this.formation = "line";
     if (event.key === "2") this.formation = "column";
     if (event.key === "3") this.formation = "wedge";
+    if (event.repeat || !this.engine || this.selectedIds.size === 0) return;
+    const ids = [...this.selectedIds];
+    if (event.key.toLowerCase() === "a") this.engine.set_stance(ids, 0);
+    if (event.key.toLowerCase() === "d") this.engine.set_stance(ids, 1);
+    if (event.key.toLowerCase() === "h") this.engine.set_stance(ids, 2);
+    if (event.key.toLowerCase() === "r") this.engine.retreat_units(ids);
   };
 
   constructor(private host: HTMLElement) {
