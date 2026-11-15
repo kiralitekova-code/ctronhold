@@ -2,6 +2,14 @@ import * as THREE from "three";
 import { RtsCamera } from "../camera/rts-camera";
 
 type WasmModule = typeof import("../wasm/wasm_bridge");
+type SnapshotEntity = {
+  id: number;
+  position: { x: number; y: number; z: number };
+  sprite: { kind: string; color: [number, number, number] };
+  moving: boolean;
+};
+
+type Formation = "line" | "column" | "wedge";
 
 export class GameRenderer {
   private scene = new THREE.Scene();
@@ -10,14 +18,20 @@ export class GameRenderer {
   private controls: RtsCamera;
   private engine?: InstanceType<WasmModule["GameEngine"]>;
   private objects = new Map<number, THREE.Object3D>();
+  private selectionRings = new Map<number, THREE.Mesh>();
+  private selectedIds = new Set<number>();
   private raycaster = new THREE.Raycaster();
   private ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private pointer = new THREE.Vector2();
   private selection: THREE.Mesh;
-  private routeLine?: THREE.Line;
-  private unitId = 2;
+  private formation: Formation = "line";
   private onCanvasClick = (event: MouseEvent) => this.handleCanvasClick(event);
   private onCanvasAuxClick = (event: MouseEvent) => this.handleCanvasClick(event);
+  private onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "1") this.formation = "line";
+    if (event.key === "2") this.formation = "column";
+    if (event.key === "3") this.formation = "wedge";
+  };
 
   constructor(private host: HTMLElement) {
     this.scene.background = new THREE.Color(0x9bb7bd);
@@ -43,6 +57,7 @@ export class GameRenderer {
 
     this.renderer.domElement.addEventListener("click", this.onCanvasClick);
     this.renderer.domElement.addEventListener("auxclick", this.onCanvasAuxClick);
+    window.addEventListener("keydown", this.onKeyDown);
     this.resize();
     window.addEventListener("resize", this.resize);
   }
@@ -87,58 +102,82 @@ export class GameRenderer {
     }
   }
 
-  private handleCanvasClick(event: MouseEvent) {
-    if (!this.engine || (event.button !== 0 && event.button !== 2)) return;
+  private updatePointer(event: MouseEvent) {
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1,
       -((event.clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const point = new THREE.Vector3();
-    if (!this.raycaster.ray.intersectPlane(this.ground, point)) return;
+  }
 
-    const x = Math.floor(point.x);
-    const z = Math.floor(point.z);
+  private handleCanvasClick(event: MouseEvent) {
+    if (!this.engine || (event.button !== 0 && event.button !== 2)) return;
+    this.updatePointer(event);
+
     if (event.button === 0) {
+      const unitMeshes = [...this.objects.entries()]
+        .filter(([id]) => id !== 1)
+        .map(([, object]) => object);
+      const hit = this.raycaster.intersectObjects(unitMeshes, false)[0];
+      if (hit) {
+        const id = Number(hit.object.userData.entityId);
+        if (!event.shiftKey) this.selectedIds.clear();
+        if (this.selectedIds.has(id) && event.shiftKey) this.selectedIds.delete(id);
+        else this.selectedIds.add(id);
+        this.syncSelectionRings();
+        return;
+      }
+
+      const point = new THREE.Vector3();
+      if (!this.raycaster.ray.intersectPlane(this.ground, point)) return;
+      const x = Math.floor(point.x);
+      const z = Math.floor(point.z);
       this.selection.position.set(x + 0.5, 0.04, z + 0.5);
       this.selection.visible = true;
+      if (!event.shiftKey) {
+        this.selectedIds.clear();
+        this.syncSelectionRings();
+      }
       return;
     }
 
-    // Right-click gives the selected test unit a real Rust-side move order.
-    const accepted = this.engine.issue_move(this.unitId, x, z);
-    if (accepted) this.drawRoute(x, z);
+    const point = new THREE.Vector3();
+    if (!this.raycaster.ray.intersectPlane(this.ground, point)) return;
+    this.issueFormationOrder(Math.floor(point.x), Math.floor(point.z));
   }
 
-  private drawRoute(goalX: number, goalZ: number) {
-    if (!this.engine) return;
-    const entities = this.engine.snapshot() as Array<{
-      id: number; position: { x: number; z: number };
-    }>;
-    const unit = entities.find(entity => entity.id === this.unitId);
-    if (!unit) return;
-    const path = this.engine.find_path(
-      Math.floor(unit.position.x), Math.floor(unit.position.z), goalX, goalZ
-    ) as number[][];
-    if (this.routeLine) {
-      this.scene.remove(this.routeLine);
-      this.routeLine.geometry.dispose();
-      (this.routeLine.material as THREE.Material).dispose();
-      this.routeLine = undefined;
-    }
-    if (path.length > 1) {
-      const points = path.map(([x, z]) => new THREE.Vector3(x + 0.5, 0.09, z + 0.5));
-      this.routeLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),
-        new THREE.LineBasicMaterial({ color: 0xffd166 }));
-      this.scene.add(this.routeLine);
+  private issueFormationOrder(goalX: number, goalZ: number) {
+    if (!this.engine || this.selectedIds.size === 0) return;
+    const ids = [...this.selectedIds].sort((a, b) => a - b);
+    const middle = (ids.length - 1) / 2;
+
+    ids.forEach((id, index) => {
+      let dx = 0;
+      let dz = 0;
+      if (this.formation === "line") {
+        dx = Math.round(index - middle);
+      } else if (this.formation === "column") {
+        dz = Math.round(index - middle);
+      } else {
+        // Symmetric shallow wedge: point unit first, then pairs behind it.
+        const row = Math.ceil((Math.sqrt(8 * index + 1) - 1) / 2);
+        const firstInRow = row * (row - 1) / 2;
+        const slot = index - firstInRow;
+        dx = slot * 2 - (row - 1);
+        dz = row;
+      }
+      this.engine!.issue_move(id, goalX + dx, goalZ + dz);
+    });
+  }
+
+  private syncSelectionRings() {
+    for (const [id, ring] of this.selectionRings) {
+      ring.visible = this.selectedIds.has(id);
     }
   }
 
   private syncEntities() {
     if (!this.engine) return;
-    const entities = this.engine.snapshot() as Array<{
-      id: number; position: { x: number; y: number; z: number };
-      sprite: { kind: string; color: [number, number, number] };
-    }>;
+    const entities = this.engine.snapshot() as SnapshotEntity[];
     for (const entity of entities) {
       let object = this.objects.get(entity.id);
       if (!object) {
@@ -147,13 +186,31 @@ export class GameRenderer {
           : new THREE.CapsuleGeometry(0.35, 0.8, 4, 8);
         const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(...entity.sprite.color) });
         object = new THREE.Mesh(geometry, material);
+        object.userData.entityId = entity.id;
         (object as THREE.Mesh).castShadow = true;
         this.scene.add(object);
         this.objects.set(entity.id, object);
+
+        if (entity.sprite.kind === "unit") {
+          const ring = new THREE.Mesh(
+            new THREE.RingGeometry(0.43, 0.52, 32),
+            new THREE.MeshBasicMaterial({ color: 0xffdf76, side: THREE.DoubleSide })
+          );
+          ring.rotation.x = -Math.PI / 2;
+          ring.position.y = 0.055;
+          ring.visible = false;
+          this.scene.add(ring);
+          this.selectionRings.set(entity.id, ring);
+        }
       }
       object.position.set(entity.position.x,
         entity.position.y + (entity.sprite.kind === "castle" ? 1.25 : 0.6),
         entity.position.z);
+      const ring = this.selectionRings.get(entity.id);
+      if (ring) {
+        ring.position.x = entity.position.x;
+        ring.position.z = entity.position.z;
+      }
     }
   }
 
@@ -169,6 +226,7 @@ export class GameRenderer {
 
   dispose() {
     window.removeEventListener("resize", this.resize);
+    window.removeEventListener("keydown", this.onKeyDown);
     this.renderer.domElement.removeEventListener("click", this.onCanvasClick);
     this.renderer.domElement.removeEventListener("auxclick", this.onCanvasAuxClick);
     this.controls.dispose();
