@@ -15,7 +15,7 @@ impl GameEngine {
         GameEngine { world: GameWorld::new(), map: GridMap }
     }
 
-    pub fn update(&mut self, delta_seconds: f32) { self.world.update(delta_seconds); }
+    pub fn update(&mut self, delta_seconds: f32) { self.world.update(delta_seconds, &self.map); }
 
     pub fn snapshot(&mut self) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&self.world.snapshot())
