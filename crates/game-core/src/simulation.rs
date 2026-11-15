@@ -124,14 +124,26 @@ impl GameWorld {
         if distance_sq > range * range {
             let start = (ax.floor() as i32, az.floor() as i32);
             let target_cell = (tx.floor() as i32, tz.floor() as i32);
-            let mut candidates = Vec::new();
+            // Reserve distinct approach cells when several soldiers focus the same target.
+            let reserved_goals: Vec<[i32; 2]> = {
+                let mut query = self.world.query::<(&AttackOrder, &MoveOrder)>();
+                query.iter(&self.world)
+                    .filter(|(order, _)| order.target_id == target_id)
+                    .filter_map(|(_, movement)| movement.path.last().copied())
+                    .collect()
+            };
+            let mut candidates: Vec<(usize, usize, Vec<[i32; 2]>)> = Vec::new();
             for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
                 let goal = (target_cell.0 + dx, target_cell.1 + dz);
                 let path = map.find_path(start, goal);
-                if !path.is_empty() { candidates.push((path.len(), path)); }
+                if !path.is_empty() {
+                    let occupied = reserved_goals.iter()
+                        .filter(|cell| **cell == [goal.0, goal.1]).count();
+                    candidates.push((path.len() + occupied * 4, path.len(), path));
+                }
             }
-            candidates.sort_by_key(|(length, _)| *length);
-            let Some((_, path)) = candidates.into_iter().next() else { return false; };
+            candidates.sort_by_key(|(score, length, _)| (*score, *length));
+            let Some((_, _, path)) = candidates.into_iter().next() else { return false; };
             if let Some(mut order) = self.world.get_mut::<MoveOrder>(attacker) {
                 order.path = path;
                 order.next_step = if order.path.len() > 1 { 1 } else { 0 };
