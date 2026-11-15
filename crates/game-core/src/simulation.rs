@@ -157,7 +157,7 @@ impl GameWorld {
         true
     }
 
-    pub fn update(&mut self, delta_seconds: f32) {
+    pub fn update(&mut self, delta_seconds: f32, map: &GridMap) {
         let dt = delta_seconds.clamp(0.0, 0.1);
         self.elapsed += dt as f64;
 
@@ -202,6 +202,39 @@ impl GameWorld {
         }
 
         self.update_combat(dt);
+        self.update_ai(map);
+    }
+
+    fn update_ai(&mut self, map: &GridMap) {
+        const AGGRO_RANGE: f32 = 12.0;
+        let (hostiles, friendlies): (Vec<(u32, f32, f32, u32)>, Vec<(u32, f32, f32)>) = {
+            let mut query = self.world.query::<(&StableId, &Position, &Team, Option<&AttackOrder>)>();
+            let mut hostiles = Vec::new();
+            let mut friendlies = Vec::new();
+            for (id, position, team, attack) in query.iter(&self.world) {
+                if team.0 == 2 {
+                    hostiles.push((id.0, position.x, position.z, attack.map(|a| a.target_id).unwrap_or(0)));
+                } else if team.0 == 1 {
+                    friendlies.push((id.0, position.x, position.z));
+                }
+            }
+            (hostiles, friendlies)
+        };
+
+        for (hostile_id, hx, hz, current_target) in hostiles {
+            let target_alive = current_target != 0 && self.entity_by_id(current_target)
+                .and_then(|entity| self.world.get::<Health>(entity).map(|health| health.current > 0.0))
+                .unwrap_or(false);
+            if target_alive { continue; }
+
+            let nearest = friendlies.iter()
+                .map(|(id, x, z)| (*id, (hx - *x).powi(2) + (hz - *z).powi(2)))
+                .filter(|(_, distance_sq)| *distance_sq <= AGGRO_RANGE * AGGRO_RANGE)
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((target_id, _)) = nearest {
+                self.issue_attack(hostile_id, target_id, map);
+            }
+        }
     }
 
     fn update_combat(&mut self, dt: f32) {
@@ -297,7 +330,7 @@ mod tests {
     fn attack_order_moves_into_range_and_deals_damage() {
         let mut game = GameWorld::new();
         assert!(game.issue_attack(2, 7, &GridMap));
-        for _ in 0..100 { game.update(0.1); }
+        for _ in 0..100 { game.update(0.1, &GridMap); }
         let enemy = game.snapshot().into_iter().find(|e| e.id == 7).unwrap();
         assert!(enemy.health.current < 100.0);
     }
@@ -306,8 +339,16 @@ mod tests {
     fn lethal_damage_removes_unit_from_snapshot() {
         let mut game = GameWorld::new();
         assert!(game.issue_attack(2, 7, &GridMap));
-        for _ in 0..1000 { game.update(0.1); }
+        for _ in 0..1000 { game.update(0.1, &GridMap); }
         assert!(!game.snapshot().iter().any(|e| e.id == 7));
+    }
+
+    #[test]
+    fn hostile_patrol_acquires_nearby_friendly_units() {
+        let mut game = GameWorld::new();
+        for _ in 0..2 { game.update(0.1, &GridMap); }
+        let hostiles: Vec<_> = game.snapshot().into_iter().filter(|e| e.team == 2).collect();
+        assert!(hostiles.iter().any(|enemy| enemy.attacking));
     }
 
     #[test]
