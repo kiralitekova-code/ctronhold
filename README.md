@@ -1,26 +1,30 @@
 # Ctronhold
 
-An original, free and open-source browser RTS prototype. The project uses Rust for deterministic simulation and ECS, WebAssembly for the browser boundary, and Three.js for rendering.
+An original browser-based RTS prototype. It uses familiar real-time strategy ideas while keeping all code, visual assets, names, factions, maps, and content original.
 
-## Stack
+## Architecture
 
-- Rust workspace: `game-core` and `wasm-bridge`
-- ECS: `bevy_ecs`
-- Browser bridge: `wasm-bindgen`
-- Rendering and camera: Three.js + TypeScript
-- UI: React + TypeScript + Vite
+- `crates/game-core`: authoritative Rust simulation, ECS components, deterministic grid map, and A* navigation.
+- `crates/wasm-bridge`: WebAssembly API exposed with `wasm-bindgen`.
+- `web`: React + TypeScript + Vite interface and Three.js presentation layer.
+- The browser owns the animation loop; Rust owns game-state and navigation decisions.
 
-## Requirements
+## Current prototype
 
-- Rust stable and `wasm32-unknown-unknown`
-- `wasm-pack`
-- Node.js 20+
+- Three.js RTS camera with WASD/arrow movement, edge scrolling, zoom, and right-mouse drag.
+- A 64x64 world grid with a generated stone ridge, a traversable gate, and a rock field.
+- Click a ground cell to highlight it and ask Rust/WASM for an A* route from the test unit.
+- The route is rendered as a temporary line; impassable cells are shown as stone blocks.
+- Castle and unit are still primitive development placeholders, not final art.
 
-## Run locally
+## Local development
+
+Requirements: stable Rust, the `wasm32-unknown-unknown` target, `wasm-pack`, and Node.js.
 
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack
+cargo test --workspace
 cd crates/wasm-bridge
 wasm-pack build --target web --out-dir ../../web/src/wasm
 cd ../../web
@@ -28,16 +32,19 @@ npm install
 npm run dev
 ```
 
-Open the Vite URL printed in the terminal.
+For a production build:
 
-## Architecture
+```bash
+npm run build
+```
 
-`game-core` owns simulation state and ECS components. `wasm-bridge` exposes a small API to JavaScript. The TypeScript presentation layer owns Three.js objects, input, camera controls and React HUD. Rendering never owns authoritative game state.
+## Design principles
 
-## Project scope
-
-A sandbox/skirmish RTS with original placeholder geometry and original code. No proprietary game assets or copied source code are included. The long-term content catalogue is implemented as data-driven definitions, not hard-coded renderer branches.
+- Simulation and game rules stay in Rust; Three.js is presentation only.
+- WebAssembly receives compact commands and returns serializable snapshots.
+- Gameplay code and visual assets are original; no proprietary Stronghold code or assets are used.
+- The current A* implementation uses four-way movement and Manhattan distance. It is a foundation for later unit orders, formations, construction placement, and siege logistics.
 
 ## License
 
-MIT.
+MIT
