@@ -17,6 +17,7 @@ export class GameRenderer {
   private routeLine?: THREE.Line;
   private unitId = 2;
   private onCanvasClick = (event: MouseEvent) => this.handleCanvasClick(event);
+  private onCanvasAuxClick = (event: MouseEvent) => this.handleCanvasClick(event);
 
   constructor(private host: HTMLElement) {
     this.scene.background = new THREE.Color(0x9bb7bd);
@@ -41,6 +42,7 @@ export class GameRenderer {
     this.scene.add(this.selection);
 
     this.renderer.domElement.addEventListener("click", this.onCanvasClick);
+    this.renderer.domElement.addEventListener("auxclick", this.onCanvasAuxClick);
     this.resize();
     window.addEventListener("resize", this.resize);
   }
@@ -168,6 +170,7 @@ export class GameRenderer {
   dispose() {
     window.removeEventListener("resize", this.resize);
     this.renderer.domElement.removeEventListener("click", this.onCanvasClick);
+    this.renderer.domElement.removeEventListener("auxclick", this.onCanvasAuxClick);
     this.controls.dispose();
     this.renderer.dispose();
     this.host.replaceChildren();
