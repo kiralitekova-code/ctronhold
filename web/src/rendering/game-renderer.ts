@@ -276,7 +276,7 @@ export class GameRenderer {
         this.selectionRings.delete(id);
       }
       const healthBar = this.healthBars.get(id);
-      if (healthBar && entity.sprite.kind === "unit") {
+      if (healthBar) {
         this.scene.remove(healthBar.group);
         this.healthBars.delete(id);
       }
@@ -336,7 +336,7 @@ export class GameRenderer {
         ring.position.z = entity.position.z;
       }
       const healthBar = this.healthBars.get(entity.id);
-      if (healthBar) {
+      if (healthBar && entity.sprite.kind === "unit") {
         const ratio = Math.max(0, Math.min(1, entity.health.current / Math.max(entity.health.max, 1)));
         healthBar.group.position.set(entity.position.x, 1.28, entity.position.z);
         healthBar.group.quaternion.copy(this.camera.quaternion);
