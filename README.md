@@ -17,7 +17,6 @@ An original browser-based RTS prototype. It uses familiar real-time strategy ide
 - Right-click on terrain issues movement orders to the selected squad. Right-click an enemy to issue an attack order; soldiers find a nearby approach cell, close to melee range, and attack on a cooldown. Friendly fire is rejected. Defeated units are removed from the simulation and renderer.
 - Each soldier currently has 100 health, deals 12 damage per hit, attacks once per second, and has a 1.6-unit melee range. These are prototype balance values. Formation keys `1`, `2`, and `3` choose line, column, and wedge respectively; the browser assigns distinct formation slots and Rust computes each unit's A* path and advances movement. A basic personal-space check prevents active movers from stepping into another moving soldier.
 - Impassable cells are shown as stone blocks. Castle and soldiers are primitive development placeholders, not final art.
-- Castle and unit are still primitive development placeholders, not final art.
 
 ## Local development
 
