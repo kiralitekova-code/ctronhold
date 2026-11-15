@@ -255,7 +255,7 @@ impl GameWorld {
                 health: *health,
                 team: team.map(|t| t.0).unwrap_or(0),
                 moving: movement.map(|o| !o.path.is_empty()).unwrap_or(false),
-                attacking: attack.is_some(),
+                attacking: attack.map(|order| order.target_id != 0).unwrap_or(false),
             }
         }).collect()
     }
