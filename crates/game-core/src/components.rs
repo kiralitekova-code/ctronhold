@@ -15,6 +15,10 @@ impl UnitClass {
     } }
 }
 
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Stance { #[default] Aggressive, Defensive, Hold }
+
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Projectile { pub target_id: u32, pub damage: f32, pub speed: f32 }
 
