@@ -224,6 +224,32 @@ impl GameWorld {
         self.update_ai(map);
     }
 
+    fn issue_archer_retreat(&mut self, archer: Entity, target_x: f32, target_z: f32, map: &GridMap) {
+        let Some(position) = self.world.get::<Position>(archer) else { return; };
+        let start = (position.x.floor() as i32, position.z.floor() as i32);
+        let mut candidates: Vec<(usize, f32, Vec<[i32; 2]>)> = Vec::new();
+        for dx in -3..=3 {
+            for dz in -3..=3 {
+                if dx == 0 && dz == 0 { continue; }
+                let goal = (start.0 + dx, start.1 + dz);
+                let path = map.find_path(start, goal);
+                if path.len() < 2 { continue; }
+                let gx = goal.0 as f32 + 0.5;
+                let gz = goal.1 as f32 + 0.5;
+                let distance_sq = (gx - target_x).powi(2) + (gz - target_z).powi(2);
+                if !(20.25..=42.25).contains(&distance_sq) { continue; }
+                candidates.push((path.len(), -distance_sq, path));
+            }
+        }
+        candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
+        if let Some((_, _, path)) = candidates.into_iter().next() {
+            if let Some(mut movement) = self.world.get_mut::<MoveOrder>(archer) {
+                movement.path = path;
+                movement.next_step = 1;
+            }
+        }
+    }
+
     fn update_ai(&mut self, map: &GridMap) {
         const AGGRO_RANGE: f32 = 12.0;
         let (hostiles, friendlies): (Vec<(u32, f32, f32, u32)>, Vec<(u32, f32, f32)>) = {
@@ -287,7 +313,8 @@ impl GameWorld {
                 (position.x, position.z, target_team.0, health.current)
             };
             if target_data.2 == team || target_data.3 <= 0.0 { continue; }
-            let in_range = (ax - target_data.0).powi(2) + (az - target_data.1).powi(2) <= range * range;
+            let target_distance_sq = (ax - target_data.0).powi(2) + (az - target_data.1).powi(2);
+            let in_range = target_distance_sq <= range * range;
             let Some(mut order) = self.world.get_mut::<AttackOrder>(attacker) else { continue; };
             order.cooldown = (order.cooldown - dt).max(0.0);
             if in_range && order.cooldown <= 0.0 {
@@ -303,6 +330,12 @@ impl GameWorld {
                     .map(|movement| movement.path.is_empty()).unwrap_or(false);
                 if needs_repath {
                     self.issue_attack(attacker_id, target_id, map);
+                }
+            } else if range > 3.0 && target_distance_sq < 16.0 {
+                let needs_retreat = self.world.get::<MoveOrder>(attacker)
+                    .map(|movement| movement.path.is_empty()).unwrap_or(false);
+                if needs_retreat {
+                    self.issue_archer_retreat(attacker, target_data.0, target_data.1, map);
                 }
             }
         }
