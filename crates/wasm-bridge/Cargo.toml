@@ -11,3 +11,4 @@ crate-type = ["cdylib", "rlib"]
 game-core = { path = "../game-core" }
 wasm-bindgen.workspace = true
 serde-wasm-bindgen.workspace = true
+console_error_panic_hook.workspace = true
