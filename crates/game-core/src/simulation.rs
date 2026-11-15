@@ -121,7 +121,8 @@ impl GameWorld {
             let Some(entity) = self.entity_by_id(*id) else { continue; };
             if self.world.get::<Sprite>(entity).map(|s| s.kind.as_str()) != Some("unit") { continue; }
             let mut goals = RALLY.to_vec();
-            goals.rotate_left(index % goals.len());
+            let goal_count = goals.len();
+            goals.rotate_left(index % goal_count);
             let Some(position) = self.world.get::<Position>(entity) else { continue; };
             let start = (position.x.floor() as i32, position.z.floor() as i32);
             let best = goals.into_iter().filter_map(|goal| {
@@ -443,15 +444,15 @@ impl GameWorld {
     pub fn snapshot(&mut self) -> Vec<EntitySnapshot> {
         let mut query = self.world.query::<(
             &StableId, &Position, &Sprite, &Health, Option<&Team>,
-            Option<&MoveOrder>, Option<&AttackOrder>, Option<&UnitClass>,
+            Option<&MoveOrder>, Option<&AttackOrder>, Option<&UnitClass>, Option<&Stance>,
         )>();
-        query.iter(&self.world).map(|(id, position, sprite, health, team, movement, attack, class)| EntitySnapshot {
+        query.iter(&self.world).map(|(id, position, sprite, health, team, movement, attack, class, stance)| EntitySnapshot {
             id: id.0, position: *position, sprite: sprite.clone(), health: *health,
             team: team.map(|t| t.0).unwrap_or(0),
             moving: movement.map(|o| !o.path.is_empty()).unwrap_or(false),
             attacking: attack.map(|order| order.target_id != 0).unwrap_or(false),
             unit_class: *class,
-            stance: self.world.get::<Stance>(entity).copied(),
+            stance: stance.copied(),
         }).collect()
     }
 }
@@ -554,6 +555,42 @@ mod tests {
         for _ in 0..100 { game.update(0.1, &GridMap); }
         let enemy = game.snapshot().into_iter().find(|e| e.id == 7).unwrap();
         assert!(enemy.health.current < UnitClass::Swordsman.max_health());
+    }
+
+    #[test]
+    fn hold_stance_stops_movement_and_clears_attack() {
+        let mut game = GameWorld::new();
+        assert!(game.issue_attack(2, 7, &GridMap));
+        assert!(game.set_stance(2, Stance::Hold));
+        let entity = game.entity_by_id(2).unwrap();
+        assert_eq!(game.world.get::<Stance>(entity), Some(&Stance::Hold));
+        assert!(game.world.get::<MoveOrder>(entity).unwrap().path.is_empty());
+        assert_eq!(game.world.get::<AttackOrder>(entity).unwrap().target_id, 0);
+    }
+
+    #[test]
+    fn defensive_stance_uses_shorter_acquisition_radius() {
+        let mut game = GameWorld::new();
+        // Friendly unit 2 is outside six units from hostile 7 but within twelve.
+        let friendly = game.entity_by_id(2).unwrap();
+        if let Some(mut p) = game.world.get_mut::<Position>(friendly) { p.x = 5.0; p.z = 2.0; }
+        let hostile = game.entity_by_id(7).unwrap();
+        if let Some(mut p) = game.world.get_mut::<Position>(hostile) { p.x = -3.0; p.z = 2.0; }
+        assert!(game.set_stance(7, Stance::Defensive));
+        game.update(0.1, &GridMap);
+        let hostile = game.entity_by_id(7).unwrap();
+        assert_eq!(game.world.get::<AttackOrder>(hostile).unwrap().target_id, 0);
+    }
+
+    #[test]
+    fn retreat_clears_combat_and_assigns_defensive_stance() {
+        let mut game = GameWorld::new();
+        assert!(game.issue_attack(2, 7, &GridMap));
+        assert_eq!(game.retreat_units(&[2], &GridMap), 1);
+        let unit = game.entity_by_id(2).unwrap();
+        assert_eq!(game.world.get::<Stance>(unit), Some(&Stance::Defensive));
+        assert_eq!(game.world.get::<AttackOrder>(unit).unwrap().target_id, 0);
+        assert!(!game.world.get::<MoveOrder>(unit).unwrap().path.is_empty());
     }
 
     #[test]
