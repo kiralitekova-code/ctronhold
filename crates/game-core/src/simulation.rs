@@ -60,13 +60,13 @@ impl GameWorld {
         let Some(entity) = entity else { return false; };
 
         let start = {
-            let Ok(position) = self.world.get::<Position>(entity) else { return false; };
+            let Some(position) = self.world.get::<Position>(entity) else { return false; };
             (position.x.floor() as i32, position.z.floor() as i32)
         };
         let path = map.find_path(start, goal);
         if path.is_empty() { return false; }
 
-        let Ok(mut order) = self.world.get_mut::<MoveOrder>(entity) else { return false; };
+        let Some(mut order) = self.world.get_mut::<MoveOrder>(entity) else { return false; };
         order.path = path;
         order.next_step = if order.path.len() > 1 { 1 } else { 0 };
         true
